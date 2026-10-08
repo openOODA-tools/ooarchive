@@ -1,0 +1,62 @@
+// # Path Traversal Guard - Zero-Trust Path Sanitizer
+//
+// Logline: Validates and sanitizes archive entry paths against zip-slip and traversal attacks.
+//
+// Setup: Pure record and path validator. Enforces zero ambient authority and negative-trust boundaries.
+//
+// Beats:
+//   1. Check path validity, rejecting null bytes, directory escapes, and root prefixes.
+//   2. Sanitize path strings by stripping leading separators and redundant components.
+//   3. Provide boolean traversal safety predicates for archive unpackers and validators.
+
+pub fn is_safe_path(path: String) -> Bool {
+    let p: String = str_trim(path);
+    let n: Int = chars_len(p);
+    if n == 0 {
+        return false;
+    }
+    if str_starts_with(p, "/") || str_starts_with(p, "\\") {
+        return false;
+    }
+    if str_contains(p, "../") || str_contains(p, "..\\") || str_contains(p, "/..") || p == ".." {
+        return false;
+    }
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(p, i);
+        if b == 0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+pub fn sanitize_entry_path(path: String) -> String {
+    let mut p: String = str_trim(path);
+    while str_starts_with(p, "/") || str_starts_with(p, "\\") {
+        p = str_slice(p, 1, chars_len(p));
+    }
+    while str_starts_with(p, "./") {
+        p = str_slice(p, 2, chars_len(p));
+    }
+    return p;
+}
+
+pub fn get_path_basename(path: String) -> String {
+    let p: String = sanitize_entry_path(path);
+    let n: Int = chars_len(p);
+    let mut last_slash: Int = -1;
+    let mut i: Int = 0;
+    while i < n {
+        let c: String = char_at(p, i);
+        if c == "/" || c == "\\" {
+            last_slash = i;
+        }
+        i = i + 1;
+    }
+    if last_slash < 0 {
+        return p;
+    }
+    return str_slice(p, last_slash + 1, n);
+}

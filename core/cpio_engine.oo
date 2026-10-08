@@ -1,0 +1,164 @@
+// # Deterministic CPIO Archive Engine
+//
+// Logline: Generates and decodes deterministic CPIO New ASCII (070701) archives.
+//
+// Setup: Pure byte serializer and deserializer. Aligns headers and payloads to 4-byte boundaries.
+//
+// Beats:
+//   1. Encode file records into 110-byte hex header blocks with zeroed UIDs/GIDs.
+//   2. Pad filenames and file contents to canonical 4-byte alignments.
+//   3. Decode CPIO byte streams and terminate upon encountering TRAILER!!! marker.
+
+import "repro_sort.oo";
+import "path_guard.oo";
+
+pub fn format_hex8(val: Int) -> String {
+    let hex_chars: String = "0123456789abcdef";
+    let mut num: Int = val;
+    let mut s: String = "";
+    if num == 0 {
+        s = "0";
+    } else {
+        while num > 0 {
+            let rem: Int = num % 16;
+            s = char_at(hex_chars, rem) + s;
+            num = num / 16;
+        }
+    }
+    while chars_len(s) < 8 {
+        s = "0" + s;
+    }
+    return s;
+}
+
+pub fn parse_hex8(s: String) -> Int {
+    let trimmed: String = str_trim(s);
+    let n: Int = chars_len(trimmed);
+    let mut val: Int = 0;
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(trimmed, i);
+        if b >= 48 && b <= 57 {
+            val = (val * 16) + (b - 48);
+        } else if b >= 97 && b <= 102 {
+            val = (val * 16) + (b - 87);
+        } else if b >= 65 && b <= 70 {
+            val = (val * 16) + (b - 55);
+        } else {
+            return val;
+        }
+        i = i + 1;
+    }
+    return val;
+}
+
+pub fn pad_align4(k: Int) -> String {
+    let rem: Int = k % 4;
+    if rem == 0 { return ""; }
+    let pad_len: Int = 4 - rem;
+    if pad_len == 1 { return " "; }
+    if pad_len == 2 { return "  "; }
+    return "   ";
+}
+
+pub fn build_cpio_archive(entries: List[ArchiveEntry]) -> String {
+    let sorted: List[ArchiveEntry] = sort_entries(entries);
+    let n: Int = list_len(sorted);
+    let mut out: String = "";
+    let mut i: Int = 0;
+
+    while i < n {
+        let entry: ArchiveEntry = list_get(sorted, i);
+        let name_clean: String = sanitize_entry_path(entry.name);
+        let name_bytes: Int = chars_len(name_clean) + 1;
+
+        let mut hdr: String = "070701";
+        hdr = hdr + "00000000";
+        hdr = hdr + format_hex8(entry.mode);
+        hdr = hdr + "00000000";
+        hdr = hdr + "00000000";
+        hdr = hdr + "00000001";
+        hdr = hdr + format_hex8(entry.mtime);
+        hdr = hdr + format_hex8(entry.size);
+        hdr = hdr + "00000000";
+        hdr = hdr + "00000000";
+        hdr = hdr + "00000000";
+        hdr = hdr + "00000000";
+        hdr = hdr + format_hex8(name_bytes);
+        hdr = hdr + "00000000";
+
+        out = out + hdr + name_clean + " ";
+        out = out + pad_align4(110 + name_bytes);
+
+        if !entry.is_dir && entry.size > 0 {
+            out = out + entry.content;
+            out = out + pad_align4(entry.size);
+        }
+        i = i + 1;
+    }
+
+    let trailer_name: String = "TRAILER!!!";
+    let tr_len: Int = chars_len(trailer_name) + 1;
+    let mut tr_hdr: String = "0707010000000000000000000000000000000000000001000000000000000000000000000000000000000000000000";
+    tr_hdr = tr_hdr + format_hex8(tr_len) + "00000000";
+    out = out + tr_hdr + trailer_name + " ";
+    out = out + pad_align4(110 + tr_len);
+    return out;
+}
+
+pub fn parse_cpio_entries(archive_data: String) -> List[ArchiveEntry] {
+    let mut out: List[ArchiveEntry] = list_new();
+    let total_len: Int = chars_len(archive_data);
+    let mut cursor: Int = 0;
+
+    while cursor + 110 <= total_len {
+        let magic: String = str_slice(archive_data, cursor, cursor + 6);
+        if magic != "070701" && magic != "070702" {
+            break;
+        }
+
+        let mode_val: Int = parse_hex8(str_slice(archive_data, cursor + 14, cursor + 22));
+        let mtime_val: Int = parse_hex8(str_slice(archive_data, cursor + 46, cursor + 54));
+        let size_val: Int = parse_hex8(str_slice(archive_data, cursor + 54, cursor + 62));
+        let namesize: Int = parse_hex8(str_slice(archive_data, cursor + 94, cursor + 102));
+
+        if namesize <= 0 || cursor + 110 + namesize > total_len {
+            break;
+        }
+
+        let name_raw: String = str_slice(archive_data, cursor + 110, cursor + 110 + namesize - 1);
+        if name_raw == "TRAILER!!!" {
+            break;
+        }
+
+        let pad_name: Int = (4 - ((110 + namesize) % 4)) % 4;
+        let data_start: Int = cursor + 110 + namesize + pad_name;
+        let pad_data: Int = (4 - (size_val % 4)) % 4;
+
+        let content: String = if size_val > 0 && data_start + size_val <= total_len {
+            str_slice(archive_data, data_start, data_start + size_val)
+        } else {
+            ""
+        };
+
+        let is_dir: Bool = (mode_val / 4096 == 4) || str_ends_with(name_raw, "/");
+        let e: ArchiveEntry = ArchiveEntry {
+            name: name_raw,
+            content: content,
+            size: size_val,
+            is_dir: is_dir,
+            mtime: mtime_val,
+            mode: mode_val
+        };
+        out = list_push(out, e);
+        cursor = data_start + size_val + pad_data;
+    }
+    return out;
+}
+
+pub fn is_cpio_content(data: String) -> Bool {
+    let n: Int = chars_len(data);
+    if n < 6 { return false; }
+    let magic: String = str_slice(data, 0, 6);
+    return magic == "070701" || magic == "070702";
+}

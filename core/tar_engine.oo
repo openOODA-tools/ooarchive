@@ -1,0 +1,179 @@
+// # Deterministic USTAR Tar Archive Engine
+//
+// Logline: Generates and decodes deterministic POSIX USTAR archives with canonical checksums.
+//
+// Setup: Pure byte serializer and deserializer. Clamps headers to 512-byte block boundaries.
+//
+// Beats:
+//   1. Encode file metadata and permissions into standard 512-byte USTAR blocks.
+//   2. Calculate canonical header checksums with space-filled checksum windows.
+//   3. Decode serialized tar byte streams into validated ArchiveEntry lists.
+
+import "repro_sort.oo";
+import "path_guard.oo";
+
+pub fn pad_zeros(k: Int) -> String {
+    let mut s: String = "";
+    let mut i: Int = 0;
+    while i < k {
+        s = s + " ";
+        i = i + 1;
+    }
+    return s;
+}
+
+pub fn format_octal(val: Int, width: Int) -> String {
+    let mut num: Int = val;
+    let mut s: String = "";
+    if num == 0 {
+        s = "0";
+    } else {
+        while num > 0 {
+            let rem: Int = num % 8;
+            s = to_string(rem) + s;
+            num = num / 8;
+        }
+    }
+    while chars_len(s) < width - 1 {
+        s = "0" + s;
+    }
+    return s + " ";
+}
+
+pub fn parse_tar_octal(s: String) -> Int {
+    let trimmed: String = str_trim(s);
+    let n: Int = chars_len(trimmed);
+    let mut val: Int = 0;
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(trimmed, i);
+        if b >= 48 && b <= 55 {
+            val = (val * 8) + (b - 48);
+        } else {
+            return val;
+        }
+        i = i + 1;
+    }
+    return val;
+}
+
+pub fn build_tar_header(entry: ArchiveEntry) -> String {
+    let name_clean: String = sanitize_entry_path(entry.name);
+    let n_len: Int = chars_len(name_clean);
+    let mut block: String = if n_len < 100 {
+        name_clean + pad_zeros(100 - n_len)
+    } else {
+        str_slice(name_clean, 0, 100)
+    };
+
+    block = block + format_octal(entry.mode, 8);
+    block = block + format_octal(0, 8);
+    block = block + format_octal(0, 8);
+    block = block + format_octal(entry.size, 12);
+    block = block + format_octal(entry.mtime, 12);
+
+    let chk_offset: Int = chars_len(block);
+    block = block + "        ";
+
+    let typeflag: String = if entry.is_dir { "5" } else { "0" };
+    block = block + typeflag;
+
+    let pre_magic_len: Int = chars_len(block);
+    block = block + pad_zeros(257 - pre_magic_len);
+    block = block + "ustar  ";
+
+    let full_len: Int = chars_len(block);
+    block = block + pad_zeros(512 - full_len);
+
+    let mut chksum: Int = 0;
+    let mut i: Int = 0;
+    while i < 512 {
+        chksum = chksum + byte_at(block, i);
+        i = i + 1;
+    }
+
+    let chk_str: String = format_octal(chksum, 7) + " ";
+    let header_final: String = str_slice(block, 0, chk_offset) + chk_str + str_slice(block, chk_offset + 8, 512);
+    return header_final;
+}
+
+pub fn build_tar_archive(entries: List[ArchiveEntry]) -> String {
+    let sorted: List[ArchiveEntry] = sort_entries(entries);
+    let n: Int = list_len(sorted);
+    let mut out: String = "";
+    let mut i: Int = 0;
+
+    while i < n {
+        let entry: ArchiveEntry = list_get(sorted, i);
+        let hdr: String = build_tar_header(entry);
+        out = out + hdr;
+
+        if !entry.is_dir && entry.size > 0 {
+            out = out + entry.content;
+            let rem: Int = entry.size % 512;
+            if rem > 0 {
+                out = out + pad_zeros(512 - rem);
+            }
+        }
+        i = i + 1;
+    }
+
+    out = out + pad_zeros(1024);
+    return out;
+}
+
+pub fn parse_tar_entries(archive_data: String) -> List[ArchiveEntry] {
+    let mut out: List[ArchiveEntry] = list_new();
+    let total_len: Int = chars_len(archive_data);
+    let mut cursor: Int = 0;
+
+    while cursor + 512 <= total_len {
+        let block: String = str_slice(archive_data, cursor, cursor + 512);
+        let raw_name: String = str_slice(block, 0, 100);
+        let mut name: String = "";
+        let mut ni: Int = 0;
+        while ni < 100 {
+            let b: Int = byte_at(raw_name, ni);
+            if b == 0 || b == 32 { break; }
+            name = name + char_at(raw_name, ni);
+            ni = ni + 1;
+        }
+
+        if chars_len(name) == 0 {
+            break;
+        }
+
+        let mode_val: Int = parse_tar_octal(str_slice(block, 100, 108));
+        let size_val: Int = parse_tar_octal(str_slice(block, 124, 136));
+        let mtime_val: Int = parse_tar_octal(str_slice(block, 136, 148));
+        let typeflag: String = char_at(block, 156);
+        let is_dir: Bool = (typeflag == "5") || str_ends_with(name, "/");
+
+        let data_start: Int = cursor + 512;
+        let blocks: Int = (size_val + 511) / 512;
+        let content: String = if !is_dir && size_val > 0 && data_start + size_val <= total_len {
+            str_slice(archive_data, data_start, data_start + size_val)
+        } else {
+            ""
+        };
+
+        let e: ArchiveEntry = ArchiveEntry {
+            name: name,
+            content: content,
+            size: size_val,
+            is_dir: is_dir,
+            mtime: mtime_val,
+            mode: mode_val
+        };
+        out = list_push(out, e);
+        cursor = data_start + (blocks * 512);
+    }
+    return out;
+}
+
+pub fn is_tar_content(data: String) -> Bool {
+    let n: Int = chars_len(data);
+    if n < 512 { return false; }
+    let magic: String = str_slice(data, 257, 262);
+    return magic == "ustar";
+}

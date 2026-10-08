@@ -1,7 +1,7 @@
 # Maintainer: openOODA-tools <ops@openooda.org>
 pkgname=ooarchive-bin
 _pkgname=ooarchive
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Deterministic reproducible archive builder guaranteeing byte-for-byte outputs."
 arch=('x86_64')

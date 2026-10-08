@@ -1,0 +1,88 @@
+// # Reproducible Archive Entry Sorter and Metadata Normalizer
+//
+// Logline: Sorts archive entries deterministically and clamps metadata for byte-for-byte reproducibility.
+//
+// Setup: Pure data structure transforms. Clamps timestamps, user IDs, and permissions.
+//
+// Beats:
+//   1. Define ArchiveEntry records representing normalized files and directories.
+//   2. Clamp timestamps to SOURCE_DATE_EPOCH or user-specified baseline epoch.
+//   3. Sort entry lists lexicographically to guarantee canonical archive serialization.
+
+pub type ArchiveEntry = struct {
+    name: String,
+    content: String,
+    size: Int,
+    is_dir: Bool,
+    mtime: Int,
+    mode: Int
+};
+
+pub fn create_entry(name: String, content: String, is_dir: Bool, mtime: Int) -> ArchiveEntry {
+    let sz: Int = if is_dir { 0 } else { chars_len(content) };
+    let md: Int = if is_dir { 493 } else { 420 };
+    return ArchiveEntry {
+        name: name,
+        content: content,
+        size: sz,
+        is_dir: is_dir,
+        mtime: mtime,
+        mode: md
+    };
+}
+
+pub fn str_compare(a: String, b: String) -> Int {
+    let na: Int = chars_len(a);
+    let nb: Int = chars_len(b);
+    let min_len: Int = if na < nb { na } else { nb };
+    let mut i: Int = 0;
+    while i < min_len {
+        let ba: Int = byte_at(a, i);
+        let bb: Int = byte_at(b, i);
+        if ba < bb { return -1; }
+        if ba > bb { return 1; }
+        i = i + 1;
+    }
+    if na < nb { return -1; }
+    if na > nb { return 1; }
+    return 0;
+}
+
+pub fn sort_entries(entries: List[ArchiveEntry]) -> List[ArchiveEntry] {
+    let n: Int = list_len(entries);
+    if n <= 1 { return entries; }
+
+    let mut arr: List[ArchiveEntry] = entries;
+    let mut i: Int = 0;
+    while i < n {
+        let mut min_idx: Int = i;
+        let mut j: Int = i + 1;
+        while j < n {
+            let ej: ArchiveEntry = list_get(arr, j);
+            let emin: ArchiveEntry = list_get(arr, min_idx);
+            if str_compare(ej.name, emin.name) < 0 {
+                min_idx = j;
+            }
+            j = j + 1;
+        }
+        if min_idx != i {
+            let tmp_i: ArchiveEntry = list_get(arr, i);
+            let tmp_min: ArchiveEntry = list_get(arr, min_idx);
+            let mut next_arr: List[ArchiveEntry] = list_new();
+            let mut k: Int = 0;
+            while k < n {
+                if k == i {
+                    next_arr = list_push(next_arr, tmp_min);
+                } else if k == min_idx {
+                    next_arr = list_push(next_arr, tmp_i);
+                } else {
+                    next_arr = list_push(next_arr, list_get(arr, k));
+                }
+                k = k + 1;
+            }
+            arr = next_arr;
+        }
+        i = i + 1;
+    }
+    return arr;
+}

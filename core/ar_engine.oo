@@ -1,0 +1,143 @@
+// # Deterministic UNIX AR Archive Engine
+//
+// Logline: Generates and decodes deterministic UNIX AR archives (!<arch>\n).
+//
+// Setup: Pure byte serializer and deserializer. Aligns payloads to 2-byte boundaries.
+//
+// Beats:
+//   1. Encode file records into standard 60-byte AR header blocks.
+//   2. Enforce canonical slash-terminated names and decimal size alignments.
+//   3. Decode AR byte streams and validate file boundaries.
+
+import "repro_sort.oo";
+import "path_guard.oo";
+
+pub fn pad_spaces_str(k: Int) -> String {
+    let mut s: String = "";
+    let mut i: Int = 0;
+    while i < k {
+        s = s + " ";
+        i = i + 1;
+    }
+    return s;
+}
+
+pub fn format_decimal_fixed(val: Int, width: Int) -> String {
+    let s: String = to_string(val);
+    let slen: Int = chars_len(s);
+    if slen >= width {
+        return str_slice(s, 0, width);
+    }
+    return s + pad_spaces_str(width - slen);
+}
+
+pub fn build_ar_header(name: String, size: Int, mtime: Int) -> String {
+    let base: String = get_path_basename(name);
+    let name_slash: String = base + "/";
+    let nlen: Int = chars_len(name_slash);
+    let mut hdr: String = if nlen < 16 {
+        name_slash + pad_spaces_str(16 - nlen)
+    } else {
+        str_slice(name_slash, 0, 16)
+    };
+
+    hdr = hdr + format_decimal_fixed(mtime, 12);
+    hdr = hdr + "0     ";
+    hdr = hdr + "0     ";
+    hdr = hdr + "100644  ";
+    hdr = hdr + format_decimal_fixed(size, 10);
+    hdr = hdr + "`\n";
+    return hdr;
+}
+
+pub fn build_ar_archive(entries: List[ArchiveEntry]) -> String {
+    let sorted: List[ArchiveEntry] = sort_entries(entries);
+    let n: Int = list_len(sorted);
+    let mut out: String = "!<arch>\n";
+    let mut i: Int = 0;
+
+    while i < n {
+        let entry: ArchiveEntry = list_get(sorted, i);
+        if !entry.is_dir {
+            let hdr: String = build_ar_header(entry.name, entry.size, entry.mtime);
+            out = out + hdr + entry.content;
+            if entry.size % 2 != 0 {
+                out = out + "\n";
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn parse_decimal_str(s: String) -> Int {
+    let trimmed: String = str_trim(s);
+    let n: Int = chars_len(trimmed);
+    let mut val: Int = 0;
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(trimmed, i);
+        if b >= 48 && b <= 57 {
+            val = (val * 10) + (b - 48);
+        } else {
+            return val;
+        }
+        i = i + 1;
+    }
+    return val;
+}
+
+pub fn parse_ar_entries(archive_data: String) -> List[ArchiveEntry] {
+    let mut out: List[ArchiveEntry] = list_new();
+    let total_len: Int = chars_len(archive_data);
+    if total_len < 8 || str_slice(archive_data, 0, 8) != "!<arch>\n" {
+        return out;
+    }
+
+    let mut cursor: Int = 8;
+    while cursor + 60 <= total_len {
+        let hdr_block: String = str_slice(archive_data, cursor, cursor + 60);
+        let raw_name: String = str_slice(hdr_block, 0, 16);
+        let mut name: String = "";
+        let mut ni: Int = 0;
+        while ni < 16 {
+            let c: String = char_at(raw_name, ni);
+            if c == "/" || c == " " { break; }
+            name = name + c;
+            ni = ni + 1;
+        }
+
+        let mtime_str: String = str_trim(str_slice(hdr_block, 16, 28));
+        let mtime_val: Int = parse_decimal_str(mtime_str);
+
+        let size_str: String = str_trim(str_slice(hdr_block, 48, 58));
+        let size_val: Int = parse_decimal_str(size_str);
+
+        let data_start: Int = cursor + 60;
+        let content: String = if size_val > 0 && data_start + size_val <= total_len {
+            str_slice(archive_data, data_start, data_start + size_val)
+        } else {
+            ""
+        };
+
+        let e: ArchiveEntry = ArchiveEntry {
+            name: name,
+            content: content,
+            size: size_val,
+            is_dir: false,
+            mtime: mtime_val,
+            mode: 420
+        };
+        out = list_push(out, e);
+
+        let pad_byte: Int = if size_val % 2 != 0 { 1 } else { 0 };
+        cursor = data_start + size_val + pad_byte;
+    }
+    return out;
+}
+
+pub fn is_ar_content(data: String) -> Bool {
+    let n: Int = chars_len(data);
+    if n < 8 { return false; }
+    return str_slice(data, 0, 8) == "!<arch>\n";
+}

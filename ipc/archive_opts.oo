@@ -1,0 +1,124 @@
+// # CLI Option Parser for ooarchive
+//
+// Logline: Parses command-line arguments for reproducible archive creation, listing, and extraction.
+//
+// Setup: Pure string list processor without ambient side effects.
+//
+// Beats:
+//   1. Identify action commands and mode switches.
+//   2. Extract archive file paths, output directories, formats, and clamped epochs.
+//   3. Collect target operand files into deterministic list containers.
+
+pub type ArchiveOpts = struct {
+    action: String,
+    archive_path: String,
+    target_dir: String,
+    format: String,
+    timestamp: Int,
+    json_mode: Bool,
+    mcp_mode: Bool,
+    help_mode: Bool,
+    version_mode: Bool,
+    files: List[String]
+};
+
+fn parse_decimal_safe(s: String) -> Int {
+    let trimmed: String = str_trim(s);
+    let n: Int = chars_len(trimmed);
+    let mut val: Int = 0;
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(trimmed, i);
+        if b >= 48 && b <= 57 {
+            val = (val * 10) + (b - 48);
+        } else {
+            return val;
+        }
+        i = i + 1;
+    }
+    return val;
+}
+
+pub fn parse_archive_args(args: List[String]) -> ArchiveOpts {
+    let mut action: String = "";
+    let mut archive_path: String = "";
+    let mut target_dir: String = ".";
+    let mut fmt: String = "tar";
+    let mut timestamp: Int = 0;
+    let mut json_mode: Bool = false;
+    let mut mcp_mode: Bool = false;
+    let mut help_mode: Bool = false;
+    let mut version_mode: Bool = false;
+    let mut files: List[String] = list_new();
+
+    let n: Int = list_len(args);
+    let mut i: Int = 0;
+
+    while i < n {
+        let arg: String = list_get(args, i);
+
+        if arg == "-h" || arg == "--help" {
+            help_mode = true;
+        } else if arg == "-v" || arg == "--version" {
+            version_mode = true;
+        } else if arg == "--mcp" {
+            mcp_mode = true;
+        } else if arg == "--json" {
+            json_mode = true;
+        } else if arg == "-c" || arg == "--create" || arg == "create" {
+            action = "create";
+        } else if arg == "-t" || arg == "-l" || arg == "--list" || arg == "list" {
+            action = "list";
+        } else if arg == "-x" || arg == "--extract" || arg == "extract" {
+            action = "extract";
+        } else if arg == "inspect" || arg == "--inspect" {
+            action = "inspect";
+        } else if arg == "-f" || arg == "--file" {
+            if i + 1 < n {
+                archive_path = list_get(args, i + 1);
+                i = i + 1;
+            }
+        } else if arg == "-C" || arg == "--directory" {
+            if i + 1 < n {
+                target_dir = list_get(args, i + 1);
+                i = i + 1;
+            }
+        } else if arg == "--format" {
+            if i + 1 < n {
+                fmt = list_get(args, i + 1);
+                i = i + 1;
+            }
+        } else if arg == "--timestamp" {
+            if i + 1 < n {
+                let ts_str: String = list_get(args, i + 1);
+                timestamp = parse_decimal_safe(ts_str);
+                i = i + 1;
+            }
+        } else if !str_starts_with(arg, "-") {
+            if action == "" {
+                if str_ends_with(arg, ".tar") || str_ends_with(arg, ".cpio") || str_ends_with(arg, ".a") {
+                    archive_path = arg;
+                    action = "list";
+                } else {
+                    files = list_push(files, arg);
+                }
+            } else {
+                files = list_push(files, arg);
+            }
+        }
+        i = i + 1;
+    }
+
+    return ArchiveOpts {
+        action: action,
+        archive_path: archive_path,
+        target_dir: target_dir,
+        format: fmt,
+        timestamp: timestamp,
+        json_mode: json_mode,
+        mcp_mode: mcp_mode,
+        help_mode: help_mode,
+        version_mode: version_mode,
+        files: files
+    };
+}

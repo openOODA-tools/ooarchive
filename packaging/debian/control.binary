@@ -1,0 +1,11 @@
+Package: ooarchive
+Version: 0.2.0-1
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: openOODA-tools <ops@openooda.org>
+Depends: libc6
+Description: ARCHIVE PACKER
+ Deterministic reproducible archive builder guaranteeing byte-for-byte outputs.
+ Capability-bounded openOODA utility with zero ambient authority,
+ deterministic timestamp clamping, and native Model Context Protocol (MCP) surface.

@@ -1,0 +1,16 @@
+// # Core Archive Subsystem Anchor
+//
+// Logline: Consolidates and re-exports path guards, deterministic sorting, and archive format engines.
+//
+// Setup: Root barrel shim for core archive domain.
+//
+// Beats:
+//   1. Re-export path traversal guard and sanitization primitives.
+//   2. Re-export reproducible entry models and lexicographical sorting.
+//   3. Re-export TAR, CPIO, and AR format serialization and deserialization engines.
+
+import "path_guard.oo";
+import "repro_sort.oo";
+import "tar_engine.oo";
+import "cpio_engine.oo";
+import "ar_engine.oo";

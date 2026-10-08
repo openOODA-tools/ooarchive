@@ -1,0 +1,75 @@
+// # Archive Terminal Renderer and JSON Formatter
+//
+// Logline: Formats table-of-contents listings, integrity diagnostics, and JSON Lines payloads.
+//
+// Setup: Pure string formatter. Enforces clean tabular presentation without ambient authority.
+//
+// Beats:
+//   1. Format file permissions into standard rwx strings.
+//   2. Format table of contents rows with right-aligned sizes and timestamps.
+//   3. Render archive entries into structured JSON Lines records.
+
+import "core/repro_sort.oo";
+
+pub fn format_mode_str(mode: Int, is_dir: Bool) -> String {
+    let p_dir: String = if is_dir { "d" } else { "-" };
+    let u_r: String = if (mode / 256) % 2 != 0 { "r" } else { "-" };
+    let u_w: String = if (mode / 128) % 2 != 0 { "w" } else { "-" };
+    let u_x: String = if (mode / 64) % 2 != 0 { "x" } else { "-" };
+    let g_r: String = if (mode / 32) % 2 != 0 { "r" } else { "-" };
+    let g_w: String = if (mode / 16) % 2 != 0 { "w" } else { "-" };
+    let g_x: String = if (mode / 8) % 2 != 0 { "x" } else { "-" };
+    let o_r: String = if (mode / 4) % 2 != 0 { "r" } else { "-" };
+    let o_w: String = if (mode / 2) % 2 != 0 { "w" } else { "-" };
+    let o_x: String = if mode % 2 != 0 { "x" } else { "-" };
+    return p_dir + u_r + u_w + u_x + g_r + g_w + g_x + o_r + o_w + o_x;
+}
+
+pub fn render_toc_line(entry: ArchiveEntry) -> String {
+    let mode_str: String = format_mode_str(entry.mode, entry.is_dir);
+    let sz_str: String = to_string(entry.size);
+    let mut pad: String = "";
+    if chars_len(sz_str) < 10 {
+        let mut k: Int = 10 - chars_len(sz_str);
+        while k > 0 {
+            pad = pad + " ";
+            k = k - 1;
+        }
+    }
+    return mode_str + " " + pad + sz_str + " " + entry.name;
+}
+
+pub fn escape_json(s: String) -> String {
+    let mut out: String = "";
+    let n: Int = chars_len(s);
+    let mut i: Int = 0;
+    while i < n {
+        let c: String = char_at(s, i);
+        if c == "\\" {
+            out = out + "\\\\";
+        } else if c == "\"" {
+            out = out + "\\\"";
+        } else if c == "\n" {
+            out = out + "\\n";
+        } else if c == "\r" {
+            out = out + "\\r";
+        } else if c == "\t" {
+            out = out + "\\t";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn render_entry_json(entry: ArchiveEntry, fmt: String) -> String {
+    let mut j: String = "{";
+    j = j + "\"name\":\"" + escape_json(entry.name) + "\",";
+    j = j + "\"size\":" + to_string(entry.size) + ",";
+    j = j + "\"is_dir\":" + (if entry.is_dir { "true" } else { "false" }) + ",";
+    j = j + "\"mode\":" + to_string(entry.mode) + ",";
+    j = j + "\"mtime\":" + to_string(entry.mtime) + ",";
+    j = j + "\"format\":\"" + fmt + "\"}";
+    return j;
+}

@@ -1,0 +1,11 @@
+// # Render Subsystem Anchor
+//
+// Logline: Consolidates and re-exports table-of-contents renderers and JSON formatters.
+//
+// Setup: Root barrel shim for render domain.
+//
+// Beats:
+//   1. Re-export table of contents styling and permissions formatting.
+//   2. Re-export JSON escaping and serialization routines.
+
+import "archive_theme.oo";
